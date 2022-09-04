@@ -8,17 +8,17 @@
 #include <string.h>
 
 
-// NOTE: Yes, this could have been done as script, but I wanted to practice it this way.
-// NOTE: Yes, a script (or other languages) could have better performance because hashmaps could be used.
-// NOTE: Yes, this code style is not the norm, I just wanted to try it out.
-// NOTE: This program considers that /etc/passwd and /etc/group are properly formatted.
-// NOTE: This program is not thread safe because getpwent() and getgrent() are nonreentrant.
-// NOTE: Yes, I could have used getpwent_r() and getgrent_r(), but I didn't want to.
-// NOTE: Yes, I only copied a subset of the passwd and group structs, but that is all that was needed.
+// NOTE: Still does not work
+//       - Some group names display garbage when printed
+//       - Users show as only being in 0 or 1 groups
 
 
 #define MAX_LEN_USR 32
 #define MAX_LEN_GRP 32
+
+#define DEBUG true
+#define FLAG fprintf(stderr, "\tFLAG: %d\n", __LINE__);
+#define DFLAG if( DEBUG ) { FLAG }
 
 
 struct Node
@@ -48,28 +48,36 @@ typedef struct User User_t;
 
 
 User_t* User_from(struct passwd* info);
+bool User_similar(void* v1, void* v2); // User_t* == char*
 void User_free(void* pVoid);
+
 Group_t* Group_from(struct group* info);
-bool Group_equals(void* v1, void* v2);
+bool Group_equals(void* v1, void* v2);  // Group_t* == Group_t*
+bool Group_similar(void* v1, void* v2); // Group_t* == struct group*
 void Group_free(void* pVoid);
 
 Node_t* Node_new();
+bool Node_contains(Node_t* pHead, void* pValue, bool(fnEqual)(void*, void*));
+void* Node_get(Node_t* pHead, void* pValue, bool(fnEqual)(void*, void*));
 void Node_free(Node_t* pHead, void(freeValue)(void*) );
 Node_t* Node_from(void* pValue);
 void Node_append(Node_t** ppHead, void* pValue);
 
 Node_t* read_passwd(Node_t** ppUsers, Node_t** ppGroups);
 Node_t* read_group(Node_t** ppUsers, Node_t** ppGroups);
-void show_user_groups(Node_t* user_list, Node_t* group_list);
+void show_user_groups(Node_t* user_list);
 
 
 int
 main(int argc, char** argv)
 {
     Node_t* user_list = NULL;
-    Group_t* group_list = NULL;
+    Node_t* group_list = NULL;
 
-    // ...
+    read_passwd(&user_list, &group_list);
+    read_group(&user_list, &group_list);
+    
+    show_user_groups(user_list);
 
     return 0;
 }
@@ -86,6 +94,20 @@ User_from(struct passwd* info)
     pUser->name = strndup(info->pw_name, MAX_LEN_USR);
     pUser->uid = info->pw_uid;
     return pUser;
+}
+
+
+bool
+User_similar(void* v1, void* v2)
+{
+    assert(v1 != NULL);
+    assert(v2 != NULL);
+
+    User_t* pUser = (User_t*)v1;
+    assert(pUser->name != NULL);
+
+    char* uname = (char*)v2;
+    return (0 == strncmp(pUser->name, uname, MAX_LEN_USR)) ? true : false;
 }
 
 
@@ -136,6 +158,22 @@ Group_equals(void* v1, void* v2)
 
     return (g1->gid == g2->gid) ? true : false;
 }
+
+
+bool
+Group_similar(void* v1, void* v2)
+{
+    assert(v1 != NULL);
+    assert(v2 != NULL);
+
+    Group_t* pGroup = (Group_t*)v1;
+    struct group* pInfo = (struct group*)v2;
+
+    if( 0 != strncmp(pGroup->name, pInfo->gr_name, MAX_LEN_GRP) )
+        return false;
+    return (pGroup->gid == pInfo->gr_gid) ? true : false;
+}
+
 
 void
 Group_free(void* pVoid)
@@ -197,10 +235,7 @@ bool
 Node_contains(Node_t* pHead, void* pValue, bool(fnEqual)(void*, void*))
 {
     if( pHead == NULL )
-    {
-        fprintf(stderr, "\tWarning: Node_contains(): pHead is NULL\n");
         return false;
-    }
     assert(pValue != NULL);
     assert(fnEqual != NULL);
 
@@ -216,8 +251,28 @@ Node_contains(Node_t* pHead, void* pValue, bool(fnEqual)(void*, void*))
 }
 
 
+void*
+Node_get(Node_t* pHead, void* pValue, bool(fnEqual)(void*, void*))
+{
+    if( pHead == NULL )
+        return NULL;
+    assert(pValue != NULL);
+    assert(fnEqual != NULL);
+
+    Node_t* pCur = pHead;
+    while( pCur )
+    {
+        if( fnEqual(pCur->pValue, pValue) )
+            return pCur;
+        pCur = pCur->pNext;
+    }
+
+    return NULL;
+}
+
+
 void
-Node_free(Node_t* pHead, void(freeValue)(void*))
+Node_free(Node_t* pHead, void(fnFree)(void*))
 {
     Node_t* pPrev = NULL;
     Node_t* pCur = pHead;
@@ -227,8 +282,8 @@ Node_free(Node_t* pHead, void(freeValue)(void*))
         pPrev = pCur;
         pCur = pCur->pNext;
 
-        if( freeValue )
-            freeValue(pPrev->pValue);
+        if( fnFree )
+            fnFree(pPrev->pValue);
         free(pPrev);
     }
 }
@@ -244,14 +299,19 @@ read_passwd(Node_t** ppUsers, Node_t** ppGroups)
 
     while( NULL != (pInfo=getpwent()) )
     {
-        Group_t* pGroup = Group_from(getgrgid(pInfo->pw_gid));
-        
-        if( !Node_contains(*ppGroups, pGroup, &Group_equals) )
-            Node_append(ppGroups, pGroup);
-
         User_t* pUser = User_from(pInfo);
-        Node_append(&(pUser->groups), pGroup);
         Node_append(ppUsers, pUser);
+
+        // if maintaining a list of groups
+        if( ppGroups )
+        {
+            Group_t* pGroup = Group_from(getgrgid(pInfo->pw_gid));
+            
+            if( !Node_contains(*ppGroups, pGroup, &Group_equals) )
+                Node_append(ppGroups, pGroup);
+
+            Node_append(&(pUser->groups), pGroup);
+        }
     }
 
     if( errno != 0 )
@@ -266,25 +326,70 @@ read_passwd(Node_t** ppUsers, Node_t** ppGroups)
 Node_t*
 read_group(Node_t** ppUsers, Node_t** ppGroups)
 {
-    Node_t* group_list = NULL;
+    assert(ppGroups != NULL);
+
     struct group* pInfo;
     errno = 0;
 
     while( NULL != (pInfo=getgrent()) )
-        Node_append(&group_list, Group_from(pInfo));
+    {
+        // add group to group list if not already present
+        Group_t* pGroup = Node_get(*ppGroups, pInfo, &Group_similar);
+        if( !pGroup )
+        {
+            pGroup = Group_from(pInfo);
+            Node_append(ppGroups, pGroup);
+        }
 
-    /*
-    for g in groups:
-        for uname in g->unames:
-            for u in users:
-                if uname == u->uname:
-                    Node_append(u, g)
-    */
+        fprintf(stderr, "Group: %s\n", pGroup->name);
+
+        // if maintaining a list of users
+        if( ppUsers )
+        {
+            DFLAG
+            char** pCurMem = pInfo->gr_mem;
+            if( pCurMem )
+            {
+                while( *pCurMem )
+                {
+                    User_t* pUser = Node_get(*ppUsers, *pCurMem, &User_similar);
+                    if( !pUser )
+                    {
+                        DFLAG
+                        fprintf(stderr, "\tWarning: Group %s (%d) contains User %s which is not in the user list\n", pInfo->gr_name, pInfo->gr_gid, *pCurMem);
+                    }
+                    else
+                    {
+                        fprintf(stderr, "User: %s\n", pUser->name);
+                        DFLAG
+                        if( !Node_contains(pUser->groups, pGroup, &Group_equals) )
+                            Node_append(&(pUser->groups), pGroup);
+                    }
+                    pCurMem++;
+                }
+            }
+        }
+    }
 }
 
 
 void
-show_user_groups(Node_t* user_list, Node_t* group_list)
+show_user_groups(Node_t* user_list)
 {
-    
+    printf("Users:\n");
+    Node_t* pNodeUser = user_list;
+    while( pNodeUser )
+    {
+        User_t* pUser = (User_t*)pNodeUser->pValue;
+        printf("    %s (%d)\n", pUser->name, pUser->uid);
+        
+        Node_t* pNodeGroup = pUser->groups;
+        while( pNodeGroup )
+        {
+            Group_t* pGroup = (Group_t*)pNodeGroup->pValue;
+            printf("        %s (%d)\n", pGroup->name, pGroup->gid);
+            pNodeGroup = pNodeGroup->pNext;
+        }
+        pNodeUser = pNodeUser->pNext;
+    }
 }
