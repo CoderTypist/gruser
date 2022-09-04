@@ -60,7 +60,8 @@ void read_group(Node_t** ppUsers, Node_t** ppGroups);
 void show_user_groups(Node_t* user_list);
 
 
-int main(int argc, char** argv)
+int
+main(int argc, char** argv)
 {
     Node_t* user_list = NULL;
     Node_t* group_list = NULL;
@@ -69,6 +70,9 @@ int main(int argc, char** argv)
     read_group(&user_list, &group_list);
     
     show_user_groups(user_list);
+
+    Node_free(user_list, User_free);
+    Node_free(group_list, Group_free);
 
     return 0;
 }
@@ -111,8 +115,6 @@ User_free(void* pVoid)
     User_t* pUser = (User_t*)pVoid;
     if( pUser->name )
         free(pUser->name);
-    if( pUser->groups )
-        Node_free(pUser->groups, Group_free);
     free(pUser);
 }
 
@@ -347,10 +349,6 @@ read_group(Node_t** ppUsers, Node_t** ppGroups)
             pGroup = Group_from(pInfo);
             Node_append(ppGroups, pGroup);
         }
-
-        void* pAddrGroup = pGroup;
-        void* pAddrGroupName = pGroup->name; 
-        char* gname = pGroup->name;
 
         // if maintaining a list of users
         if( ppUsers )
