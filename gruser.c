@@ -40,7 +40,7 @@ typedef struct User User_t;
 
 
 User_t* User_from(struct passwd* info);
-bool User_equals(void* v1, void* v2);
+bool User_equals(void* v1, void* v2);  // User_t* == User_t*
 bool User_similar(void* v1, void* v2); // User_t* == char*
 void User_free(void* pVoid);
 
@@ -113,7 +113,7 @@ User_equals(void* v1, void* v2)
 
     if( 0 != strncmp(u1->name, u2->name, MAX_LEN_USR) )
         return false;
-    return (u1->uid == u2->uid) ? true : false;
+    return (u1->uid == u2->uid);
 }
 
 
@@ -175,7 +175,7 @@ Group_equals(void* v1, void* v2)
     if( 0 != strncmp(g1->name, g2->name, MAX_LEN_GRP) )
         return false;
 
-    return (g1->gid == g2->gid) ? true : false;
+    return (g1->gid == g2->gid);
 }
 
 
@@ -190,7 +190,7 @@ Group_similar(void* v1, void* v2)
 
     if( 0 != strncmp(pGroup->name, pInfo->gr_name, MAX_LEN_GRP) )
         return false;
-    return (pGroup->gid == pInfo->gr_gid) ? true : false;
+    return (pGroup->gid == pInfo->gr_gid);
 }
 
 
@@ -392,6 +392,7 @@ read_group(Node_t** ppUsers, Node_t** ppGroups)
             }
         }
     }
+    endgrent();
 }
 
 
